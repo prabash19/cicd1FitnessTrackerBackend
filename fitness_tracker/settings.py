@@ -116,6 +116,10 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 10,
 }
 
-# CORS settings
-CORS_ALLOW_ALL_ORIGINS = True  # Change in production
-CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOWED_ORIGINS = config(
+    "CORS_ALLOWED_ORIGINS",
+    default="http://127.0.0.1:8000",
+    cast=Csv()
+)
+CORS_ALLOW_CREDENTIALS = config("CORS_ALLOW_CREDENTIALS", default=True, cast=bool)
