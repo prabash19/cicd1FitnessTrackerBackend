@@ -73,6 +73,6 @@ Development (optional)
 
 python manage.py runserver
 
-# Production (Render or Linux server)
+## Production (Render or Linux server)
 
 gunicorn fitness_tracker.wsgi:application --bind 0.0.0.0:8000
