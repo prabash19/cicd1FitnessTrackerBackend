@@ -353,3 +353,154 @@ class ActivityStatusUpdateView(APIView):
             'message': 'Activity status updated successfully',
             'data': ActivitySerializer(activity).data
         }, status=status.HTTP_200_OK)
+
+class PasswordResetRequestView(APIView):
+    """
+    Request Password Reset
+    POST /api/auth/password-reset/request/
+    Body: { "email": "user@example.com" }
+    """
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request):
+        email = request.data.get('email')
+        
+        if not email:
+            return Response({
+                'error': 'Email is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # Return success even if user doesn't exist (security best practice)
+            return Response({
+                'message': 'If an account exists with this email, you will receive a password reset link'
+            }, status=status.HTTP_200_OK)
+        
+        # Generate token and UID
+        token = default_token_generator.make_token(user)
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        
+        # Create reset link (adjust frontend URL as needed)
+        reset_link = f"{settings.FRONTEND_URL}/reset-password/{uid}/{token}/"
+        
+        # Send email
+        try:
+            send_mail(
+                subject='Password Reset Request',
+                message=f'Click the link below to reset your password:\n\n{reset_link}\n\nThis link will expire in 24 hours.',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            return Response({
+                'error': 'Failed to send email. Please try again later.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        return Response({
+            'message': 'If an account exists with this email, you will receive a password reset link'
+        }, status=status.HTTP_200_OK)
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    Confirm Password Reset
+    POST /api/auth/password-reset/confirm/
+    Body: { 
+        "uid": "encoded_user_id",
+        "token": "reset_token",
+        "new_password": "newpassword123"
+    }
+    """
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request):
+        uid = request.data.get('uid')
+        token = request.data.get('token')
+        new_password = request.data.get('new_password')
+        
+        if not all([uid, token, new_password]):
+            return Response({
+                'error': 'uid, token, and new_password are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate password length
+        if len(new_password) < 8:
+            return Response({
+                'error': 'Password must be at least 8 characters long'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Decode UID
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_id)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            return Response({
+                'error': 'Invalid reset link'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+        
+        # Optionally, invalidate all existing tokens for this user
+        Token.objects.filter(user=user).delete()
+        
+        return Response({
+            'message': 'Password has been reset successfully'
+        }, status=status.HTTP_200_OK)
+
+
+class PasswordChangeView(APIView):
+    """
+    Change Password for Authenticated User
+    POST /api/auth/password-change/
+    Body: { 
+        "old_password": "currentpassword",
+        "new_password": "newpassword123"
+    }
+    Requires: Authentication Token
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        
+        if not all([old_password, new_password]):
+            return Response({
+                'error': 'old_password and new_password are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verify old password
+        if not request.user.check_password(old_password):
+            return Response({
+                'error': 'Current password is incorrect'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate new password length
+        if len(new_password) < 8:
+            return Response({
+                'error': 'New password must be at least 8 characters long'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if new password is same as old
+        if old_password == new_password:
+            return Response({
+                'error': 'New password must be different from current password'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Set new password
+        request.user.set_password(new_password)
+        request.user.save()
+        
+        # Update token (optional - keeps user logged in)
+        Token.objects.filter(user=request.user).delete()
+        new_token = Token.objects.create(user=request.user)
+        
+        return Response({
+            'message': 'Password changed successfully',
+            'token': new_token.key
+        }, status=status.HTTP_200_OK)
